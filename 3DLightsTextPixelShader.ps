@@ -1,0 +1,120 @@
+Texture2D shaderTexture;
+SamplerState SampleType;
+
+struct Material
+{
+	float4 ambient;
+	float4 diffuse;
+	float4 specular; // w = SpecPower
+	float4 reflect;
+};
+
+cbuffer MatrixBuffer : register(b0) 
+{
+	matrix worldMatrix;
+	matrix viewMatrix;
+	matrix orthoMatrix;
+	Material bMaterial;
+};
+
+struct PointLight
+{
+	float4 ambient;
+	float4 diffuse;
+	float4 specular;
+
+	float3 position;
+	float range;
+
+	float3 att;
+	float pad;
+};
+
+cbuffer PerFrame : register(b1) 
+{
+	PointLight bPointLight;
+	float4 bEyePosW;
+};
+
+void ComputePointLight(Material mat, PointLight L, float3 pos, float3 normal, float3 toEye,
+	out float4 ambient, out float4 diffuse, float4 spec)
+{
+	ambient = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	diffuse = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	spec = float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+	float3 lightVec = L.position - pos;
+
+	float d = length(lightVec);
+
+	if(d > L.range)
+		return;
+
+	lightVec /= d;
+
+	ambient = mat.ambient * L.ambient;
+
+	float diffuseFactor = dot(lightVec, normal);
+
+	[flatten]
+	if(diffuseFactor > 0.0f)
+	{
+		float3 v = reflect(-lightVec, normal);
+		float specFactor = pow(max(dot(v, toEye), 0.0f), mat.specular.w);
+
+		diffuse = diffuseFactor * mat.diffuse * L.diffuse;
+		spec = specFactor * mat.specular * L.specular;
+	}
+
+	float att = 1.0f / dot(L.att, float3(1.0f, d, d*d));
+
+	diffuse *= att;
+	spec *= att;
+}
+
+struct PixelInputType
+{
+	float4 positionH : SV_POSITION;
+	float4 positionW : POSITIONW;
+	float2 tex : TEXCOORD0;
+	float3 normal : NORMAL;
+};
+
+float4 TexturePixelLightsShader3D(PixelInputType input) : SV_TARGET
+{
+	input.normal = normalize(input.normal);
+
+	float4 toEyeW = normalize(bEyePosW - input.positionW);
+
+	float4 ambient = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	float4 diffuse = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	float4 spec = float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+	float4 A = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	float4 D = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	float4 S = float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+	ComputePointLight(bMaterial, bPointLight, input.positionW, input.normal, toEyeW, A, D, S);
+
+	ambient += A;
+	diffuse += D;
+	spec += S;
+
+	float4 textureColor;
+
+	textureColor = shaderTexture.Sample(SampleType, input.tex);
+
+	//float texAlpha = textureColor.a;
+	//textureColor.a = 1.0f;
+	
+	float4 light = ambient + diffuse + spec;
+
+	textureColor = saturate(light * textureColor);
+
+	//textureColor.r = 1.0f;
+	//textureColor.g = 1.0f;
+	//textureColor.b = 1.0f;
+	textureColor.a = 1.0f;
+	
+	return textureColor;
+}
